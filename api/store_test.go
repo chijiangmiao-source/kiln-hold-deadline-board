@@ -94,3 +94,58 @@ func TestGetTimerNotFound(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
+
+// TestListTimersBoardDeterministicOrder 以固定 now 验证看板顺序：
+// 保温中（deadline > now）按截止时刻升序排在已到时之前，临界毫秒
+// （deadline == now）归已到时组，同组截止时刻相同按 id 升序。
+func TestListTimersBoardDeterministicOrder(t *testing.T) {
+	st, _ := openTempStore(t)
+	const now = int64(1_800_000_000_000)
+	insert := func(label string, deadline int64) int64 {
+		t.Helper()
+		res, err := st.db.Exec(
+			`INSERT INTO timers (label, minutes, accepted_at, deadline) VALUES (?, 1, ?, ?)`,
+			label, now-60000, deadline,
+		)
+		if err != nil {
+			t.Fatalf("insert %s: %v", label, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("LastInsertId: %v", err)
+		}
+		return id
+	}
+	// 乱序插入，覆盖临界毫秒与同截止时刻的并列。
+	readyBoundary := insert("ready-boundary", now) // 临界毫秒归已到时
+	holdingLate := insert("holding-late", now+2000)
+	readyEarly := insert("ready-early", now-1)
+	holdingSoon := insert("holding-soon", now+1000)
+	readyEarly2 := insert("ready-early-2", now-1)      // 与 readyEarly 同截止
+	holdingSoon2 := insert("holding-soon-2", now+1000) // 与 holdingSoon 同截止
+
+	got, err := st.ListTimersBoard(now)
+	if err != nil {
+		t.Fatalf("ListTimersBoard: %v", err)
+	}
+	want := []int64{holdingSoon, holdingSoon2, holdingLate, readyEarly, readyEarly2, readyBoundary}
+	if len(got) != len(want) {
+		t.Fatalf("got %d timers, want %d", len(got), len(want))
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("position %d: got id %d, want %d (full order: %+v)", i, got[i].ID, id, got)
+		}
+	}
+
+	// 旧版列表仍按创建顺序（id 升序），不受看板排序影响。
+	legacy, err := st.ListTimers()
+	if err != nil {
+		t.Fatalf("ListTimers: %v", err)
+	}
+	for i := 1; i < len(legacy); i++ {
+		if legacy[i-1].ID >= legacy[i].ID {
+			t.Fatalf("legacy list not in creation order: %+v", legacy)
+		}
+	}
+}

@@ -263,6 +263,180 @@ func TestListTimers(t *testing.T) {
 	}
 }
 
+// TestBoardLess 验证看板比较器的临界规则：保温中排前，临界毫秒归已到时，
+// 同组按截止时刻升序，同截止按 id 升序。
+func TestBoardLess(t *testing.T) {
+	const now = int64(1_000_000)
+	mk := func(id, deadline int64) Timer { return Timer{ID: id, Deadline: deadline} }
+	cases := []struct {
+		name string
+		a, b Timer
+		want bool
+	}{
+		{"holding before ready", mk(2, now+1), mk(1, now-1), true},
+		{"ready never before holding", mk(1, now-1), mk(2, now+1), false},
+		{"boundary ms is ready", mk(1, now), mk(2, now+1), false},
+		{"holding just past boundary first", mk(2, now+1), mk(1, now), true},
+		{"same group by deadline asc", mk(2, now+200), mk(1, now+100), false},
+		{"same group by deadline asc 2", mk(2, now+100), mk(1, now+200), true},
+		{"ready group by deadline asc", mk(1, now-200), mk(2, now-100), true},
+		{"tie deadline by id asc", mk(1, now+100), mk(2, now+100), true},
+		{"tie deadline id desc loses", mk(2, now+100), mk(1, now+100), false},
+		{"tie deadline ready group by id", mk(1, now-5), mk(2, now-5), true},
+	}
+	for _, c := range cases {
+		if got := boardLess(now, c.a, c.b); got != c.want {
+			t.Errorf("%s: boardLess(%+v, %+v) = %v, want %v", c.name, c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestListBoardView 多条保温中与已到时记录按看板顺序返回：
+// 保温中按截止时刻升序排前，同截止按 id 升序；全部记录共用同一个服务端 now。
+func TestListBoardView(t *testing.T) {
+	srv, st := newTestServer(t)
+	now := time.Now().UTC().UnixMilli()
+	insert := func(label string, deadline int64) int64 {
+		t.Helper()
+		res, err := st.db.Exec(
+			`INSERT INTO timers (label, minutes, accepted_at, deadline) VALUES (?, 1, ?, ?)`,
+			label, now-120000, deadline,
+		)
+		if err != nil {
+			t.Fatalf("insert %s: %v", label, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("LastInsertId: %v", err)
+		}
+		return id
+	}
+	// 乱序插入；截止时刻取整分钟，避免请求期间漂移改变分组。
+	readyOld := insert("ready-old", now-60000)
+	holdingLate := insert("holding-late", now+120000)
+	readyRecent := insert("ready-recent", now-1000)
+	holdingSoon := insert("holding-soon", now+60000)
+	holdingSoon2 := insert("holding-soon-2", now+60000) // 同截止 → id 升序
+
+	rec := doRequest(t, srv, http.MethodGet, "/api/timers?view=board", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var states []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &states); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []int64{holdingSoon, holdingSoon2, holdingLate, readyOld, readyRecent}
+	if len(states) != len(want) {
+		t.Fatalf("got %d timers, want %d", len(states), len(want))
+	}
+	var serverNow int64
+	for i, id := range want {
+		if got := intField(t, states[i], "id"); got != id {
+			t.Fatalf("position %d: got id %d, want %d (full: %v)", i, got, id, states)
+		}
+		n := intField(t, states[i], "now")
+		if i == 0 {
+			serverNow = n
+		} else if n != serverNow {
+			t.Fatalf("now differs across board items: %d vs %d", n, serverNow)
+		}
+		deadline := intField(t, states[i], "deadline")
+		if states[i]["status"] != statusAt(n, deadline) {
+			t.Fatalf("item %d status %v inconsistent with now %d / deadline %d",
+				i, states[i]["status"], n, deadline)
+		}
+		if rem := intField(t, states[i], "remaining_ms"); rem != remainingMs(n, deadline) {
+			t.Fatalf("item %d remaining_ms %d inconsistent with now %d / deadline %d",
+				i, rem, n, deadline)
+		}
+	}
+	// 分组边界与采样 now 一致：保温中的截止时刻必须严格大于 now。
+	if d := intField(t, states[2], "deadline"); d <= serverNow {
+		t.Fatalf("holding deadline %d not after now %d", d, serverNow)
+	}
+	if d := intField(t, states[3], "deadline"); d > serverNow {
+		t.Fatalf("ready deadline %d not at or before now %d", d, serverNow)
+	}
+}
+
+// TestListBoardViewEmpty 看板视图表为空时返回空数组而非 null。
+func TestListBoardViewEmpty(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := doRequest(t, srv, http.MethodGet, "/api/timers?view=board", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Fatalf("empty board body = %q, want []", body)
+	}
+}
+
+// TestListWithoutViewKeepsCreationOrder 未带 view=board 时（含未知 view 值）
+// 保持原有响应与创建顺序，即使截止时刻顺序与创建顺序相反。
+func TestListWithoutViewKeepsCreationOrder(t *testing.T) {
+	srv, st := newTestServer(t)
+	now := time.Now().UTC().UnixMilli()
+	insert := func(label string, deadline int64) int64 {
+		t.Helper()
+		res, err := st.db.Exec(
+			`INSERT INTO timers (label, minutes, accepted_at, deadline) VALUES (?, 1, ?, ?)`,
+			label, now-120000, deadline,
+		)
+		if err != nil {
+			t.Fatalf("insert %s: %v", label, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("LastInsertId: %v", err)
+		}
+		return id
+	}
+	// 先插入的记录截止更晚、甚至已到时：若误用看板排序会被重排。
+	first := insert("first", now+3600000)
+	second := insert("second", now-60000) // 已到时，看板视图会排到最后
+	third := insert("third", now+60000)
+
+	for _, target := range []string{"/api/timers", "/api/timers?view=unknown"} {
+		rec := doRequest(t, srv, http.MethodGet, target, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", target, rec.Code)
+		}
+		var states []map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &states); err != nil {
+			t.Fatalf("%s: decode: %v", target, err)
+		}
+		want := []int64{first, second, third}
+		if len(states) != len(want) {
+			t.Fatalf("%s: got %d timers, want %d", target, len(states), len(want))
+		}
+		for i, id := range want {
+			if got := intField(t, states[i], "id"); got != id {
+				t.Fatalf("%s: position %d got id %d, want %d (creation order)", target, i, got, id)
+			}
+		}
+	}
+}
+
+// TestListBoardFailureReturnsErrorWithoutID 看板读取失败只返回错误，不得携带计时标识。
+func TestListBoardFailureReturnsErrorWithoutID(t *testing.T) {
+	srv, st := newTestServer(t)
+	if err := st.Close(); err != nil { // 强制后续读取失败
+		t.Fatalf("close: %v", err)
+	}
+	rec := doRequest(t, srv, http.MethodGet, "/api/timers?view=board", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	m := decodeBody(t, rec)
+	if _, ok := m["error"]; !ok {
+		t.Fatalf("missing error: %v", m)
+	}
+	if _, ok := m["id"]; ok {
+		t.Fatalf("failure response must not carry a timer id: %v", m)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	srv, _ := newTestServer(t)
 	rec := doRequest(t, srv, http.MethodGet, "/api/health", "")

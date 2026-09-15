@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,37 @@ func stateOf(t Timer, nowMs int64) timerState {
 	}
 }
 
+// statesOf 以同一个服务端 now 生成计时视图数组（空切片序列化为 []）。
+func statesOf(timers []Timer, nowMs int64) []timerState {
+	states := make([]timerState, 0, len(timers))
+	for _, t := range timers {
+		states = append(states, stateOf(t, nowMs))
+	}
+	return states
+}
+
+// boardGroup 与 statusAt 同一边界规则：deadline > now 为保温中（0，排前），
+// 否则已到时（1，排后）；临界毫秒 deadline == now 归已到时组。
+func boardGroup(nowMs, deadlineMs int64) int {
+	if deadlineMs > nowMs {
+		return 0
+	}
+	return 1
+}
+
+// boardLess 是看板排序比较器：保温中的记录按截止时刻升序排在已到时记录之前，
+// 同组截止时刻相同则按 id 升序。与 Store.ListTimersBoard 的 SQL ORDER BY
+// 使用同一组排序键，两层共同保证确定性顺序。
+func boardLess(nowMs int64, a, b Timer) bool {
+	if ga, gb := boardGroup(nowMs, a.Deadline), boardGroup(nowMs, b.Deadline); ga != gb {
+		return ga < gb
+	}
+	if a.Deadline != b.Deadline {
+		return a.Deadline < b.Deadline
+	}
+	return a.ID < b.ID
+}
+
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Label   string          `json:"label"`
@@ -149,17 +181,31 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	// 同一个服务端 now 同时用于看板排序与状态推导。
+	now := time.Now().UTC().UnixMilli()
+	if r.URL.Query().Get("view") == "board" {
+		s.handleListBoard(w, now)
+		return
+	}
+	// 未带 view=board：保持原有响应与创建顺序（id 升序）。
 	timers, err := s.store.ListTimers()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read timers")
 		return
 	}
-	now := time.Now().UTC().UnixMilli()
-	states := make([]timerState, 0, len(timers))
-	for _, t := range timers {
-		states = append(states, stateOf(t, now))
+	writeJSON(w, http.StatusOK, statesOf(timers, now))
+}
+
+// handleListBoard 输出看板视图：SQL 已按同一 now 排定顺序，Go 层再以
+// 同一比较器做稳定排序兜底，两层共同保证确定性顺序。
+func (s *Server) handleListBoard(w http.ResponseWriter, now int64) {
+	timers, err := s.store.ListTimersBoard(now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read timers")
+		return
 	}
-	writeJSON(w, http.StatusOK, states)
+	sort.SliceStable(timers, func(i, j int) bool { return boardLess(now, timers[i], timers[j]) })
+	writeJSON(w, http.StatusOK, statesOf(timers, now))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

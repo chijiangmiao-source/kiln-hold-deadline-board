@@ -4,6 +4,10 @@
 服务端把时刻持久化到 SQLite，浏览器刷新或 API 重启后仍读取同一不可变截止时刻，
 绝不重新起算，避免整炉制品被提前或延后出窑。
 
+页面右上角的「窑位看板」入口供值班长交接时在同一页面掌握所有窑位的保温进度：
+看板列出数据库中的全部计时，点选任一记录即进入原有单计时详情
+（id 写入原 localStorage 键，刷新、API 重启及返回详情都落到同一不可变计时）。
+
 ## 计时规则
 
 1. 表单只接受**非空窑位标签**（首尾空白不计，最长 80 字符）和 **1 至 180 的十进制整数分钟数**
@@ -61,7 +65,11 @@ API 当前 UTC 毫秒现算；`accepted_at`、`deadline` 恒为创建时写入�
 
 ### `GET /api/timers` — 列出全部计时
 
-`200` 返回计时状态数组（同一 `now` 采样）。
+`200` 返回计时状态数组（同一 `now` 采样），默认按创建顺序（id 升序）。
+
+附加可选参数 `?view=board` 时返回看板视图（仍以同一个服务端 `now` 计算）：
+保温中的记录按截止时刻升序排在已到时记录之前，同组截止时刻相同则按 id 升序；
+该确定性顺序由 SQLite 查询与 Go 服务共同保证。未带参数时响应与创建顺序不变。
 
 ### `GET /api/health` — 健康检查
 
@@ -113,7 +121,7 @@ cd web && npm run test
 # 或在前端容器内运行：
 docker compose exec frontend npm run test
 
-# Playwright：真实联调（创建→递减→刷新→API 重启→临界翻转→偏差提示）
+# Playwright：真实联调（创建→递减→刷新→API 重启→临界翻转→偏差提示→窑位看板）
 docker compose up -d --build
 cd e2e && npm install && npx playwright install chromium
 npm run test          # WEB_URL 默认 http://localhost:8080

@@ -47,3 +47,11 @@ export function createTimer(label: string, minutes: number): Promise<TimerState>
 export function getTimer(id: number): Promise<TimerState> {
   return request<TimerState>(`/timers/${id}`)
 }
+
+/**
+ * listBoardTimers 拉取窑位看板：服务端以同一个 now 排定
+ * 「保温中按截止时刻升序 → 已到时」的确定性顺序，前端按返回顺序渲染，不重排。
+ */
+export function listBoardTimers(): Promise<TimerState[]> {
+  return request<TimerState[]>('/timers?view=board')
+}

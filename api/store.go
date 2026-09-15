@@ -104,7 +104,25 @@ func (s *Store) GetTimer(id int64) (Timer, error) {
 
 // ListTimers 按创建顺序返回全部计时。
 func (s *Store) ListTimers() ([]Timer, error) {
-	rows, err := s.db.Query(`SELECT id, label, minutes, accepted_at, deadline FROM timers ORDER BY id`)
+	return s.queryTimers(`SELECT id, label, minutes, accepted_at, deadline FROM timers ORDER BY id`)
+}
+
+// ListTimersBoard 以 nowMs 为当前时刻，按看板顺序返回全部计时：
+// 保温中（deadline > nowMs）的记录按截止时刻升序排在已到时记录之前，
+// 同组内截止时刻相同则按 id 升序。临界毫秒（deadline == nowMs）归已到时组，
+// 与 statusAt 的边界规则一致。排序键与 server 层的 boardLess 相同，
+// SQLite 查询与 Go 服务共同保证该确定性顺序。
+func (s *Store) ListTimersBoard(nowMs int64) ([]Timer, error) {
+	return s.queryTimers(
+		`SELECT id, label, minutes, accepted_at, deadline FROM timers
+		 ORDER BY CASE WHEN deadline > ? THEN 0 ELSE 1 END, deadline, id`,
+		nowMs,
+	)
+}
+
+// queryTimers 执行查询并逐行扫描为计时切片。
+func (s *Store) queryTimers(query string, args ...any) ([]Timer, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
