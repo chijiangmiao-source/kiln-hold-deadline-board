@@ -17,13 +17,16 @@ services:
       retries: 12
       start_period: 5s
 
-  web:
+  frontend:
     build: ./web
+    environment:
+      # compose 网络内通过服务名访问 API。
+      API_TARGET: http://api:8080
     depends_on:
       api:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "${WEB_PORT:-8080}:5173"
 
 volumes:
   kiln-data:

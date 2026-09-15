@@ -1,13 +1,13 @@
-# 构建阶段
-FROM node:20-alpine AS build
+# 前端容器：保留源码与依赖，既能托管页面也能进入容器运行测试。
+FROM node:20-alpine
 WORKDIR /app
-COPY package.json package-lock.json ./
+RUN chown node:node /app
+COPY --chown=node:node package.json package-lock.json ./
+USER node
 RUN npm ci
-COPY . .
+COPY --chown=node:node . .
 RUN npm run build
-
-# 运行阶段：nginx 托管静态文件并把 /api 反向代理到 Go API
-FROM nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+# compose 网络内 API 服务名为 api；本地单跑容器时可用 -e API_TARGET=... 覆盖。
+ENV API_TARGET=http://api:8080
+EXPOSE 5173
+CMD ["npx", "vite", "preview", "--host", "0.0.0.0", "--port", "5173"]

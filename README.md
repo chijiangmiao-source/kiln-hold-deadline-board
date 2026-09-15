@@ -69,7 +69,7 @@ API 当前 UTC 毫秒现算；`accepted_at`、`deadline` 恒为创建时写入�
 
 ## 快速开始（Docker Compose）
 
-只启动前端与 API 两个服务，SQLite 落在命名卷 `kiln-data` 上承担重启续作：
+只启动 `frontend` 与 `api` 两个服务，SQLite 落在命名卷 `kiln-data` 上承担重启续作：
 
 ```bash
 docker compose up --build
@@ -80,6 +80,13 @@ docker compose up --build
 
 ```bash
 WEB_PORT=9000 API_PORT=9001 docker compose up --build
+```
+
+前端容器内保留源码与依赖，可直接进入运行测试：
+
+```bash
+docker compose exec frontend npm run test       # Vitest
+docker compose exec frontend npm run typecheck  # vue-tsc
 ```
 
 验证重启不漂移：创建计时后执行 `docker compose restart api`，
@@ -103,6 +110,8 @@ cd api && go test ./...
 
 # Vitest：前端状态/剩余毫秒/偏差阈值/格式化等纯逻辑
 cd web && npm run test
+# 或在前端容器内运行：
+docker compose exec frontend npm run test
 
 # Playwright：真实联调（创建→递减→刷新→API 重启→临界翻转→偏差提示）
 docker compose up -d --build
@@ -118,7 +127,7 @@ npm run test          # WEB_URL 默认 http://localhost:8080
 
 ```
 api/    Go API（SQLite 持久化，modernc.org/sqlite 纯 Go 驱动）
-web/    Vue 3 + Vite 前端（nginx 托管并反代 /api）
+web/    Vue 3 + Vite 前端（容器内 vite preview 托管构建产物并反代 /api）
 e2e/    Playwright 联调测试
 docker-compose.yml
 ```
