@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+/api/kiln-api
+
+# 测试产物
+coverage/
+test-results/
+playwright-report/
+
+# SQLite 数据文件（本地运行产生；容器内由命名卷持久化）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 环境覆盖
+.env

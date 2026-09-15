@@ -1,0 +1,130 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #14100c;
+  color: #f3e9dc;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  letter-spacing: 0.1em;
+}
+
+.card {
+  background: #201913;
+  border: 1px solid #3a2f22;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 1rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+input {
+  background: #14100c;
+  border: 1px solid #4a3c2b;
+  border-radius: 8px;
+  color: inherit;
+  padding: 0.6rem 0.75rem;
+  font-size: 1rem;
+}
+
+button {
+  background: #c2622b;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid #4a3c2b;
+  color: #d8c7b2;
+  margin-top: 1rem;
+}
+
+.error {
+  color: #ff8a80;
+}
+
+.warning {
+  background: #3d2f10;
+  border: 1px solid #8a6d1f;
+  border-radius: 8px;
+  color: #ffd97a;
+  padding: 0.6rem 0.8rem;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.badge {
+  border-radius: 999px;
+  font-weight: 700;
+  padding: 0.3rem 0.9rem;
+  letter-spacing: 0.08em;
+}
+
+.badge.holding {
+  background: #5c4310;
+  color: #ffd97a;
+}
+
+.badge.ready {
+  background: #1d4d2b;
+  color: #7dffa8;
+}
+
+.countdown {
+  font-size: 3rem;
+  font-variant-numeric: tabular-nums;
+  margin: 1rem 0 0.2rem;
+}
+
+.remaining-ms {
+  color: #b9a88f;
+  margin-top: 0;
+}
+
+.times {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.times dt {
+  color: #b9a88f;
+  font-size: 0.85rem;
+}
+
+.times dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

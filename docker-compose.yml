@@ -1,0 +1,29 @@
+# 只启动前端与 API 两个服务；SQLite 数据由命名卷 kiln-data 持久化，
+# API 容器重启后从同一卷继续读写，截止时刻不漂移。
+services:
+  api:
+    build: ./api
+    environment:
+      ADDR: ":8080"
+      DB_PATH: /data/kiln.db
+    volumes:
+      - kiln-data:/data
+    ports:
+      - "${API_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  web:
+    build: ./web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  kiln-data:
